@@ -6,6 +6,7 @@
 #include <map>
 #include <vector>
 #include <cstdlib>
+#include <thread>
 
 vector<HWND> oldRxWindows;
 
@@ -14,30 +15,69 @@ vector<HWND> tempRxWindowsForAdjusting;
 
 wstring rx_name = L"Roblox";
 
-void setPos(HWND hwnd, int type, bool minimize) {
-    cout << "pos " << type << endl;
+bool hideOnStart = true;
+bool affectOldWindows = false;
 
+void setPos(HWND hwnd, int type, bool minimize) {
     RECT desktop;
     const HWND hDesktop = GetDesktopWindow();
     GetWindowRect(hDesktop, &desktop);
-    int x = desktop.right;
-    int y = desktop.bottom;
+    int desktopX = desktop.right;
+    int desktopY = desktop.bottom;
+
+    int x1 = 0;
+    int y1 = 0;
+    int x2 = 0;
+    int y2 = 0;
 
     // -7, 0, 967, 638     // 953, 0, 1927, 638     // -7, 402, 967, 1047     // 953, 402, 1927, 1047
-    if (type == 1) { SetWindowPos(hwnd, NULL, -7, 0, 974, 638, NULL); }
-    else if (type == 2) { SetWindowPos(hwnd, NULL, 953, 0, 974, 638, NULL); } // 1390
-
-    if (x == 1920 && y == 984) {
-        if (type == 3) { SetWindowPos(hwnd, NULL, -7, 306, 974, 645, NULL); }
-        else if (type == 4) { SetWindowPos(hwnd, NULL, 953, 306, 974, 645, NULL); }
+    if (type == 1) {
+        x1 = -7;
+        y1 = 0;
+        x2 = 974;
+        y2 = 638;
+    }
+    else if (type == 2) {
+        x1 = 953;
+        y1 = 0;
+        x2 = 974;
+        y2 = 638;
+    }
+    if (desktopX == 1920 && desktopY == 984) {
+        if (type == 3) {
+            x1 = -7;
+            y1 = 306;
+            x2 = 974;
+            y2 = 645;
+        }
+        else if (type == 4) {
+            x1 = 953;
+            y1 = 306;
+            x2 = 974;
+            y2 = 645;
+        }
     }
     else { // default 1920 * 1080
-        if (type == 3) { SetWindowPos(hwnd, NULL, -7, 402, 974, 645, NULL); }
-        else if (type == 4) { SetWindowPos(hwnd, NULL, 953, 402, 974, 645, NULL); }
+        if (type == 3) {
+            x1 = -7;
+            y1 = 402;
+            x2 = 974;
+            y2 = 645;
+        }
+        else if (type == 4) {
+            x1 = 953;
+            y1 = 402;
+            x2 = 974;
+            y2 = 645;
+        }
     }
 
+    RECT r;
+    GetWindowRect(hwnd, &r);
+    if(!(r.left==x1 && r.top==y1 && r.right==x2 && r.bottom==y2)) SetWindowPos(hwnd, NULL, x1, y1, x2, y2, NULL);
+
     Sleep(1);
-    if(minimize) ShowWindow(hwnd, SW_MINIMIZE);
+    if(minimize && hideOnStart) ShowWindow(hwnd, SW_MINIMIZE);
 }
 
 void printWindowPos(HWND hwnd) {
@@ -55,7 +95,7 @@ void setPositions(bool minimize) {
     Sleep(50);
     for (auto& w : rxWindowsForAdjusting) {
         //if(IsIconic(w)) {
-            ShowWindow(w, SW_RESTORE);
+            if(!IsWindowVisible(w)) ShowWindow(w, SW_RESTORE); // can it cause a bug?
         //}
         setPos(w, i, minimize);
         i++;
@@ -80,7 +120,7 @@ bool checkNotStartupWindow(HWND hwnd) {
     int y = p.bottom - p.top;
     cout << x << " " << y << endl;
     
-    return ((x==816 || x ==974) && y == 638); // 974 645 // 638 // 974 638 // 816 638
+    return ((x==816 || x ==974) && (y == 638 || y== 645)); // 974 645 // 638 // 974 638 // 816 638
     // (x == 974 && (y == 645 || y == 638))
     // 974 638
 }
@@ -88,10 +128,17 @@ bool checkNotStartupWindow(HWND hwnd) {
 void handleRxWindow(HWND hwnd) {
     if (!containsWindow(hwnd)) {
         if (!checkNotStartupWindow(hwnd)) return;
+        RECT r;
+        GetWindowRect(hwnd, &r);
+        if (r.top == -32000) {
+            ShowWindow(hwnd, SW_MINIMIZE);
+            ShowWindow(hwnd, SW_RESTORE);
+        }
+        cout << r.left << " " << r.right << " " << r.top << " " << r.bottom << endl;
         //printWindowPos(hwnd);
         rxWindowsForAdjusting.push_back(hwnd);
         setPositions(false); // true
-        ShowWindow(hwnd, SW_MINIMIZE);
+        if(hideOnStart) ShowWindow(hwnd, SW_MINIMIZE);
     }
 }
 
@@ -134,8 +181,12 @@ static BOOL CALLBACK scanningRxCallback(HWND hwnd, LPARAM lparam) {
     GetWindowText(hwnd, buffer, length + 1);
     wstring ws(buffer);
     //string str(ws.begin(), ws.end());
+    //if (!(r.right - r.left == 520 && r.top - r.bottom == 320)) {
+        
+    //}
+    //if (520 320)
     if (ws == rx_name) {
-        if (!isOldWindow(hwnd)) {
+        if (affectOldWindows || !isOldWindow(hwnd)) {
             handleRxWindow(hwnd);
             //cout << "Found!\n";
         }
@@ -163,15 +214,64 @@ void findOldWindows() {
     EnumWindows(findOldCallback, NULL);
 }
 
-int main() {
-    findOldWindows();
-    while (true) {
-        //cout << "Scanning\n";
-        removeClosed(true);
-        removeOldExtraClosed();
-        scanRxs();
-        Sleep(750);
+void printFailedHk(int failed) {
+    if (failed > 0) {
+        cout << "Failed to register " << failed << " hotkey";
+        if (failed > 1) cout << "s";
+        cout << endl;
     }
 
+    //if (RegisterHotKey(NULL, 22, MOD_ALT | MOD_NOREPEAT, 0xDC)) { wprintf(L"Hotkey 'Alt + N': Start/Stop sending messages in RX chat\n"); }
+    cout << endl;
+}
+
+void registerHotkeys() {
+    int failed = 0;
+    if (RegisterHotKey(NULL, 1, MOD_ALT | MOD_NOREPEAT, 0x46)) { wprintf(L"Hotkey 'Alt + F': Pause/resume hiding on start (On by default)\n"); }
+    else failed++;
+    if (RegisterHotKey(NULL, 2, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, 0x46)) { wprintf(L"Hotkey 'Ctrl + Shift + F': Toggle affecting old windows (Off by default)\n"); } // ctrl alt v before to restore position
+    else failed++;
+    if (RegisterHotKey(NULL, 3, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 0x46)) { wprintf(L"Hotkey 'Ctrl + Alt + F': Adjust all again\n"); }
+    else failed++;
+    printFailedHk(failed);
+}
+
+void doTheActions() {
+    removeClosed(true);
+    removeOldExtraClosed();
+    scanRxs();
+}
+
+void startHk() {
+    registerHotkeys();
+    MSG msg;
+    while (GetMessage(&msg, NULL, 0, 0) != 0) {
+        if (msg.message == WM_HOTKEY) {
+            if (msg.wParam == 1) {
+                hideOnStart = !hideOnStart;
+                if (hideOnStart) cout << "Hiding windows on start is now enabled" << endl;
+                else cout << "Hiding windows on start is now disabled" << endl;
+            }
+            else if (msg.wParam == 2) {
+                affectOldWindows = !affectOldWindows;
+                if (affectOldWindows) cout << "Affecting old windows is now enabled" << endl;
+                else cout << "Affecting old windows is now disabled" << endl;
+            }
+            else if (msg.wParam == 3) {
+                rxWindowsForAdjusting.clear(); // bad code but such a fast way to make this
+                doTheActions();
+            }
+        }
+    }
+}
+
+int main() {
+    findOldWindows();
+    new thread(startHk);
+    while (true) {
+        //cout << "Scanning\n";
+        doTheActions();
+        Sleep(750);
+    }
     return 0;
 }
